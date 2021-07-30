@@ -1,16 +1,25 @@
 package com.example.rsshool2021_android_task_pomodoro
 
+import android.content.Intent
 import android.graphics.Color
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleObserver
+import androidx.lifecycle.OnLifecycleEvent
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.rsshool2021_android_task_pomodoro.databinding.ActivityMainBinding
-import com.example.rsshool2021_android_task_pomodoro.databinding.StopwatchItemBinding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MainActivity :    AppCompatActivity(),
-                        StopwatchListener {
+                        StopwatchListener,
+                        LifecycleObserver {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var stopwatchViewModel: StopwatchViewModel
@@ -22,6 +31,7 @@ class MainActivity :    AppCompatActivity(),
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         initViewModel()
         initStopwatchAdapter()
         initRecyclerView()
@@ -58,10 +68,18 @@ class MainActivity :    AppCompatActivity(),
                     val seconds = matchResult.groupValues[2].toLongOrNull() ?: 0
 
                     if (minutes != null) {
-                        val startMs  = (minutes * 60 + seconds) * 1000
-                        stopwatchViewModel.let {
-                            it.stopwatches.add(Stopwatch(it.nextId++, startMs, startMs, false, null, null))
-                            stopwatchAdapter.submitList(it.stopwatches.toList())
+                        val durationMs  = (minutes * 60 + seconds) * 1000
+
+                        if (durationMs > 0) {
+                            stopwatchViewModel.let {
+                                it.stopwatches.add(
+                                    Stopwatch(
+                                        it.nextId++, durationMs, durationMs,
+                                        null, null, Color.WHITE
+                                    )
+                                )
+                                submitNewList(it.stopwatches.toMutableList())
+                            }
                         }
                     }
                 }
@@ -69,61 +87,36 @@ class MainActivity :    AppCompatActivity(),
         }
     }
 
-    override fun start(id: Int) {
-        changeStopwatch(id, null, true)
-    }
+    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+    fun onAppBackgrounded() {
+         val runningStopwatch = stopwatchViewModel
+            .stopwatches
+            .find { it.state == Stopwatch.STATE.start }
 
-    override fun stop(id: Int, currentMs: Long) {
-        changeStopwatch(id, currentMs, false)
-    }
-
-    override fun reset(id: Int, startMs: Long) {
-        changeStopwatch(id, startMs, false)
-    }
-
-    override fun delete(id: Int) {
-        stopwatchViewModel.let {
-            it.stopwatches.remove(getStopwatchById(id))
-            stopwatchAdapter.submitList(it.stopwatches.toList())
+        runningStopwatch?.let {
+            val startIntent = Intent(this, ForegroundService::class.java)
+            startIntent.putExtra(COMMAND_ID, COMMAND_START)
+            startIntent.putExtra(STARTED_TIMER_TIME_MS, it.currentMs)
+            startService(startIntent)
         }
     }
 
-    override fun setColor(stopwatchItemBinding: StopwatchItemBinding, color: Int) {
-        stopwatchItemBinding.root.setCardBackgroundColor(color)
-//        stopwatchItemBinding.startPauseButton.setBackgroundColor(color)
-//        stopwatchItemBinding.restartButton.setBackgroundColor(color)
-//        stopwatchItemBinding.deleteButton.setBackgroundColor(color)
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    fun onAppForegrounded() {
+        val stopIntent = Intent(this, ForegroundService::class.java)
+        stopIntent.putExtra(COMMAND_ID, COMMAND_STOP)
+        startService(stopIntent)
     }
 
-    override fun startForm(stopwatch: Stopwatch) {
-        stopwatch.binding?.let { setColor(it, Color.WHITE) }
-        stopwatch.binding?.startPauseButton?.text = "START"
+
+    override fun submitNewList(newList: MutableList<Stopwatch>) {
+        stopwatchAdapter.submitList(newList)
+
     }
 
-    override fun stopForm(stopwatch: Stopwatch) {
-        stopwatch.binding?.startPauseButton?.text = "STOP"
+    override fun notifyDataSetChanged() {
+        stopwatchAdapter.notifyDataSetChanged()
     }
 
-    override fun completeForm(stopwatch: Stopwatch) {
-        stopwatch.binding?.let { setColor(it, Color.RED) }
-        stopwatch.binding?.startPauseButton?.text = "START"
-    }
 
-    private fun getStopwatchById(id: Int): Stopwatch? {
-        return stopwatchViewModel.stopwatches.find { it.id == id }
-    }
-
-    private fun changeStopwatch(id: Int, currentMs: Long?, isStarted: Boolean) {
-        stopwatchViewModel.let {
-            it.stopwatches
-                .find {
-                    it.id == id
-                }
-                ?.let {
-                    it.currentMs = currentMs ?: it.currentMs
-                    it.isStarted = isStarted
-                }
-            stopwatchAdapter.notifyDataSetChanged()
-        }
-    }
 }

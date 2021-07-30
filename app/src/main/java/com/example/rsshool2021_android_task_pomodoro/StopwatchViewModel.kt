@@ -5,100 +5,133 @@ import android.graphics.drawable.AnimationDrawable
 import android.util.Log
 import androidx.core.view.isInvisible
 import androidx.lifecycle.ViewModel
+import com.example.rsshool2021_android_task_pomodoro.databinding.StopwatchItemBinding
 import kotlinx.coroutines.*
 
 class StopwatchViewModel: ViewModel() {
 
     val stopwatches = mutableListOf<Stopwatch>()
+    var listener: StopwatchListener? = null
     var nextId = 0
-    var runningStopwatchId = -1
 
-    private var listener: StopwatchListener? = null
+    fun initStopwatchItem(
+        binding: StopwatchItemBinding,
+        stopwatch: Stopwatch) {
+            binding.stopwatchTimer.text = displayTime(stopwatch.currentMs)
+            binding.root.setCardBackgroundColor(stopwatch.color)
+            binding.circleView.setPeriod(stopwatch.durationMs)
+            binding.circleView.setCurrent(stopwatch.durationMs - stopwatch.currentMs)
 
-    fun setValues(listener: StopwatchListener) {
-        this.listener = listener
-    }
-
-    fun startTimer(stopwatch: Stopwatch) {
-        stopwatches.forEach {
-            if (it.id == runningStopwatchId) {
-                Log.e("VM", "${it.id}, ${runningStopwatchId}")
-                listener?.startForm(it)
-                it.isStarted = false
-                stopTimer(it)
+            if (stopwatch.state == Stopwatch.STATE.start) {
+                stopwatch.uiJob?.cancel()
+                stopwatch.uiJob = startUpdateUI(binding, stopwatch)
             }
+            if (stopwatch.state == Stopwatch.STATE.stop)
+                stopUpdateUI(binding)
+    }
+
+    fun initButtonsListeners(
+        binding: StopwatchItemBinding,
+        stopwatch: Stopwatch) {
+        binding.startPauseButton.setOnClickListener {
+            if (stopwatch.state == Stopwatch.STATE.start)
+                changeState(Stopwatch.STATE.stop, binding, stopwatch)
+            else if (stopwatch.state == Stopwatch.STATE.stop && stopwatch.currentMs > 0)
+                changeState(Stopwatch.STATE.start, binding, stopwatch)
         }
-        listener?.stopForm(stopwatch)
-        stopwatch.timer = startCoroutineTimer(stopwatch = stopwatch)
-        stopwatch.timer?.start()
-        runningStopwatchId = stopwatch.id
-        startAnimation(stopwatch)
+
+        binding.deleteButton.setOnClickListener {
+            changeState(Stopwatch.STATE.delete, binding, stopwatch)
+        }
     }
 
-    fun stopTimer(stopwatch: Stopwatch) {
-        stopwatch.timer?.cancel()
-        stopAnimation(stopwatch)
+    fun changeState(
+        state: Stopwatch.STATE,
+        binding: StopwatchItemBinding,
+        stopwatch: Stopwatch) {
+        stopwatch.state = state
+        if (state == Stopwatch.STATE.start)
+            start(binding, stopwatch)
+        if (state == Stopwatch.STATE.delete)
+            delete(stopwatch)
     }
 
-    private fun startAnimation(stopwatch: Stopwatch) {
-        stopwatch.binding?.blinkingIndicator?.apply {
+    private fun start(
+        binding: StopwatchItemBinding,
+        stopwatch: Stopwatch) {
+        stopRunningStopwatch(stopwatch)
+        stopwatch.apply {
+            uiJob?.cancel()
+            uiJob = startUpdateUI(binding, stopwatch)
+            timerJob = startTimer(stopwatch)
+        }
+    }
+
+    private fun stopRunningStopwatch(stopwatch: Stopwatch) {
+        stopwatches
+            .forEach {
+                if (it.id != stopwatch.id)
+                    it.state = Stopwatch.STATE.stop
+            }
+    }
+
+    private fun delete(stopwatch: Stopwatch) {
+        stopwatches.remove(stopwatches.find { it.id == stopwatch.id })
+        listener?.submitNewList(stopwatches.toMutableList())
+    }
+
+    private fun startAnimation(binding: StopwatchItemBinding) {
+        binding.blinkingIndicator.apply {
             isInvisible = false
             (background as? AnimationDrawable)?.start()
         }
     }
 
-    private fun stopAnimation(stopwatch: Stopwatch) {
-        stopwatch.binding?.blinkingIndicator?.apply {
+    private fun stopAnimation(binding: StopwatchItemBinding) {
+        binding.blinkingIndicator.apply {
             isInvisible = true
             (background as? AnimationDrawable)?.stop()
         }
     }
 
-    private fun startCoroutineTimer(delayMillis: Long = UNIT_TEN_MS, stopwatch: Stopwatch) = GlobalScope.launch(Dispatchers.IO) {
+    private fun startUpdateUI(
+        binding: StopwatchItemBinding,
+        stopwatch: Stopwatch,
+        delayMillis: Long = StopwatchViewHolder.UNIT_TEN_MS) = MainScope().launch(Dispatchers.Main) {
+        startAnimation(binding)
+        binding.startPauseButton.text = "STOP"
+        while (stopwatch.state == Stopwatch.STATE.start) {
+            delay(delayMillis)
+            binding.circleView.setCurrent(stopwatch.durationMs - stopwatch.currentMs)
+            binding.stopwatchTimer.text = displayTime(stopwatch.currentMs)
+        }
+        stopUpdateUI(binding)
+    }
+
+    private fun stopUpdateUI(binding: StopwatchItemBinding) = MainScope().launch(Dispatchers.Main) {
+        binding.apply {
+            startPauseButton.text = "START"
+            stopAnimation(binding)
+        }
+    }
+
+    private fun startTimer(stopwatch: Stopwatch, delayMillis: Long = StopwatchViewHolder.UNIT_TEN_MS) = MainScope().launch(Dispatchers.IO) {
         stopwatch.apply {
-            while (currentMs > 0) {
+            val startMs = System.currentTimeMillis()
+            val currentDurationMs = currentMs
+
+            while (stopwatch.state == Stopwatch.STATE.start && stopwatch.currentMs > 0) {
                 delay(delayMillis)
-                currentMs -= delayMillis
-                GlobalScope.launch(Dispatchers.Main) {
-                    binding?.stopwatchTimer?.text = displayTime(currentMs)
-                }
+                currentMs = (currentDurationMs + startMs - System.currentTimeMillis())
             }
-            GlobalScope.launch(Dispatchers.Main) {
+            MainScope().launch(Dispatchers.Main) {
                 if (currentMs <= 0L) {
-                    listener?.completeForm(stopwatch)
-//                    binding?.let { listener?.setColor(it, Color.RED) }
-                    stopAnimation(stopwatch)
+                    stopwatch.color = Color.RED
+                    stopwatch.state = Stopwatch.STATE.complete
+                    listener?.notifyDataSetChanged()
                 }
             }
         }
-    }
-
-     fun displayTime(timestamp: Long): String {
-        if (timestamp <= 0L)
-            return START_TIME
-
-        val h = timestamp / 1000 / 3600
-        val m = timestamp / 1000 % 3600 / 60
-        val s = timestamp / 1000 % 60
-//        val ms = timestamp % 1000 / 10
-
-//         return "${displaySlot(h)}:${displaySlot(m)}:${displaySlot(s)}:${displaySlot(ms)}"
-         return "${displaySlot(h)}:${displaySlot(m)}:${displaySlot(s)}"
-    }
-
-    private fun displaySlot(count: Long): String {
-        return if (count / 10L > 0) {
-            "$count"
-        } else {
-            "0$count"
-        }
-    }
-
-    private companion object {
-
-        private const val START_TIME = "00:00:00"
-        private const val UNIT_TEN_MS = 10L
-
     }
 
 }

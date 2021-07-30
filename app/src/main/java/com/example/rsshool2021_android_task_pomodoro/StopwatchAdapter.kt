@@ -18,6 +18,7 @@ class StopwatchAdapter(
     }
 
     override fun onBindViewHolder(holder: StopwatchViewHolder, position: Int) {
+//        holder.setIsRecyclable(false)
         holder.bind(getItem(position))
     }
 
@@ -30,12 +31,13 @@ class StopwatchAdapter(
         private val itemComparator = object : DiffUtil.ItemCallback<Stopwatch>() {
 
             override fun areItemsTheSame(oldItem: Stopwatch, newItem: Stopwatch): Boolean {
-                return oldItem.id == newItem.id
+                return  oldItem.id == newItem.id
             }
 
             override fun areContentsTheSame(oldItem: Stopwatch, newItem: Stopwatch): Boolean {
-                return oldItem.currentMs == newItem.currentMs &&
-                        oldItem.isStarted == newItem.isStarted
+                return  oldItem.durationMs == newItem.durationMs &&
+                        oldItem.currentMs == newItem.currentMs &&
+                        oldItem.state == newItem.state
             }
 
             override fun getChangePayload(oldItem: Stopwatch, newItem: Stopwatch) = Any()
